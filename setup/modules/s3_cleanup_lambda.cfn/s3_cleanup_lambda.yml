@@ -1,0 +1,121 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: Lambda function to cleanup S3 buckets
+
+
+Resources:
+
+  S3AccessForLambdaPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          -
+            Sid: AllowLambdaS3Access
+            Effect: Allow
+            Action:
+              - s3:*
+              - xray:*
+            Resource: "*"
+    
+  S3AccessForLambdaRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+              
+      ManagedPolicyArns:
+        - !Ref S3AccessForLambdaPolicy
+    
+  S3CleanupLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties: 
+        Code: 
+          ZipFile:  |
+            #!/usr/bin/env python
+            # -*- coding: utf-8 -*-
+
+            import json
+            import boto3
+            from botocore.vendored import requests
+
+            def lambda_handler(event, context):
+                try:
+                    bucket = event['ResourceProperties']['BucketName']
+
+                    print ("Deleting objects in bucket:")
+                    print (bucket)
+                    s3_client = boto3.client('s3')
+                    object_response_paginator = s3_client.get_paginator('list_object_versions')
+
+                    delete_marker_list = []
+                    version_list = []
+                    print("Removing objects in:")
+                    print(bucket)
+
+                    for object_response_itr in object_response_paginator.paginate(Bucket=bucket):
+                        if 'DeleteMarkers' in object_response_itr:
+                            for delete_marker in object_response_itr['DeleteMarkers']:
+                                delete_marker_list.append({'Key': delete_marker['Key'], 'VersionId': delete_marker['VersionId']})
+
+                        if 'Versions' in object_response_itr:
+                            for version in object_response_itr['Versions']:
+                                version_list.append({'Key': version['Key'], 'VersionId': version['VersionId']})
+
+                    for i in range(0, len(delete_marker_list), 1000):
+                        response = s3_client.delete_objects(
+                            Bucket=bucket,
+                            Delete={
+                                'Objects': delete_marker_list[i:i+1000],
+                                'Quiet': True
+                            }
+                        )                    
+
+                    for i in range(0, len(version_list), 1000):
+                        response = s3_client.delete_objects(
+                            Bucket=bucket,
+                            Delete={
+                                'Objects': version_list[i:i+1000],
+                                'Quiet': True
+                            }
+                        )
+
+                    sendResponseCfn(event, context, "SUCCESS")
+                except Exception as e:
+                    print(e)
+                    sendResponseCfn(event, context, "FAILED")
+
+
+            def sendResponseCfn(event, context, responseStatus):
+                response_body = {'Status': responseStatus,
+                                'Reason': 'Log stream name: ' + context.log_stream_name,
+                                'PhysicalResourceId': context.log_stream_name,
+                                'StackId': event['StackId'],
+                                'RequestId': event['RequestId'],
+                                'LogicalResourceId': event['LogicalResourceId'],
+                                'Data': json.loads("{}")}
+
+                requests.put(event['ResponseURL'], data=json.dumps(response_body))
+
+        FunctionName: !Sub "${AWS::StackName}-s3-cleanup-lambda"
+        Handler: index.lambda_handler
+        MemorySize: 128
+        ReservedConcurrentExecutions: 10
+        Role: !GetAtt S3AccessForLambdaRole.Arn
+        Runtime: python3.7
+        TracingConfig: 
+          Mode: Active
+
+Outputs:
+
+  S3CleanupLambdaArn:
+    Description: ARN of S3 cleanup Lambda function.
+    Value: !GetAtt S3CleanupLambdaFunction.Arn

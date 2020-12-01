@@ -1,0 +1,10 @@
+namespace: ${namespace}
+cfngin_bucket: ${namespace}-s3-bucket-test
+sys_path: ./
+
+stacks:
+
+  s3-bucket:
+    template_path: ../../../modules/s3_bucket_test.cfn/s3_bucket_test.yml
+    variables:
+      S3CleanupLambdaArn: ${rxref s3-cleanup-lambda::S3CleanupLambdaArn}

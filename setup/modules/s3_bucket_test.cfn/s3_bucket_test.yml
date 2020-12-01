@@ -1,0 +1,28 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: Lambda function to cleanup S3 buckets
+
+Parameters:
+  
+  S3CleanupLambdaArn:
+    Description: ARN of the cleanup function.
+    Type: String
+  
+Resources:
+
+  S3Bucket:
+    Type: "AWS::S3::Bucket"
+    Properties:
+        BucketName: !Sub "${AWS::StackName}"
+  
+  CleanupBucketOnDelete:
+    Type: Custom::CustomCleanupBucketResource
+    Properties:
+      ServiceToken: !Ref S3CleanupLambdaArn
+      BucketName: !Ref S3Bucket
+
+Outputs:
+
+  S3Bucket:
+    Description: S3Bucket name
+    Value: !Ref S3Bucket

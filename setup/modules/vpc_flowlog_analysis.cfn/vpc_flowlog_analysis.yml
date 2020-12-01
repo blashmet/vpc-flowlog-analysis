@@ -1,0 +1,716 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Kinesis infrastructure for vpc flowlog visualization.
+
+Parameters:
+
+  VPCId:
+    Type: String
+    Description: The VPC ID for the source VPC where all network flows will be logged and collected for analysis. Also used for S3 bucket name.
+
+  S3CleanupLambdaArn:
+    Type: String
+    Description: Lambda to cleanup buckets before deletion.
+    
+
+Resources:
+
+  FirehoseTransformationLambdaRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-FHTransformRole"
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        -
+          PolicyName: !Sub "${AWS::StackName}-FirehosePolicy"
+          PolicyDocument:
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+
+  FirehoseTransformationFunction:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-FHTransformFunction"
+      Description: "Decompresses and extracts VPC flow log records from CW log data"
+      Handler: "index.handler"
+      Role: !GetAtt FirehoseTransformationLambdaRole.Arn
+      Runtime: "nodejs12.x"
+      Timeout: "180"
+      Code:
+        S3Bucket: !Sub "utility-lambdas-${AWS::Region}"
+        S3Key: "firehose-process-vpc-flow-logs.zip"
+
+  FirehoseDeliveryRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-FirehoseRole"
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - firehose.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        -
+          PolicyName: !Sub "${AWS::StackName}-FirehosePolicy"
+          PolicyDocument:
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                  - glue:GetTableVersions
+                Resource: "*"
+              -
+                Effect: Allow
+                Action:
+                  - s3:*
+                Resource:
+                  - !Join ["", ["arn:aws:s3:::", !Ref S3Bucket]]
+                  - !Join ["", ["arn:aws:s3:::", !Ref S3Bucket, "/*"]]
+              -
+                Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                  - lambda:GetFunctionConfiguration
+                Resource:
+                  - !GetAtt FirehoseTransformationFunction.Arn
+
+  KDARole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-KDARole"
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - kinesisanalytics.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        -
+          PolicyName: !Sub "${AWS::StackName}-KDAPolicy"
+          PolicyDocument:
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                  - firehose:DescribeDeliveryStream
+                  - firehose:Get*
+                Resource: !GetAtt KDFIngestion.Arn
+              -
+                Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                  - lambda:GetFunctionConfiguration
+                Resource:
+                  - !GetAtt KDAOutputLambda.Arn
+                  - !GetAtt KDAPreprocessLambda.Arn
+
+  CWMetricsUpdateLambdaRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-KDAOutputLambdaRole"
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        -
+          PolicyName: !Sub "${AWS::StackName}-KDAPolicy"
+          PolicyDocument:
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "arn:aws:logs:*:*:*"
+              -
+                Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                Resource:
+                  - "*"
+
+  UpdateFirehoseFormatConversionLambdaRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-FirehoseConversionRole"
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        -
+          PolicyName: !Sub "${AWS::StackName}-FirehosePolicy"
+          PolicyDocument:
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - firehose:UpdateDestination
+                  - firehose:DescribeDeliveryStream
+                  - iam:PassRole
+                Resource: "*"
+
+  FirehoseUpdateFormatConversionFunction:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-FirehoseConversion"
+      Description: "Updates the Firehose delivery stream to enable it for record format conversion"
+      Handler: "index.handler"
+      Role: !GetAtt UpdateFirehoseFormatConversionLambdaRole.Arn
+      Runtime: "nodejs12.x"
+      Timeout: "180"
+      Code:
+        S3Bucket: !Sub "utility-lambdas-${AWS::Region}"
+        S3Key: "firehose-update-format-conversion.zip"
+
+  Custom:
+    Type: Custom::ConfigureFirehoseResource
+    Properties:
+      ServiceToken: !GetAtt FirehoseUpdateFormatConversionFunction.Arn
+      DeliveryStreamName: !Ref KDFIngestion
+      GlueDatabaseName: !Ref GlueDatabase
+      GlueTableName: !Ref GlueTable
+      FirehoseRole: !GetAtt FirehoseDeliveryRole.Arn
+      Region: !Ref AWS::Region
+
+  KDAOutputLambda:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-KDADestinationFunction"
+      Description: "Takes the output from KDA and writes to CW logs"
+      Handler: "index.handler"
+      Role: !GetAtt CWMetricsUpdateLambdaRole.Arn
+      Runtime: "nodejs12.x"
+      Timeout: "180"
+      Code:
+        S3Bucket: !Sub "utility-lambdas-${AWS::Region}"
+        S3Key: "kda-update-cw-metrics.zip"
+
+  KDAPreprocessLambda:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-KDAPreprocessFunction"
+      Description: "Takes the compressed records from input and decompresses them so they can be used by KDA"
+      Handler: "index.handler"
+      Role: !GetAtt CWMetricsUpdateLambdaRole.Arn
+      Runtime: "nodejs12.x"
+      Timeout: "180"
+      Code:
+        S3Bucket: !Sub "utility-lambdas-${AWS::Region}"
+        S3Key: "kda-preprocess-flowlogs.zip"
+
+  UpdateFirehoseDataFormatConversionLambda:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-KDFUpdateDataFormat"
+      Description: "Updates the Firehose delivery stream so that it converts data to Parquet.  This feature was unable to be set by CloudFormation at the time."
+      Handler: "index.handler"
+      Role: !GetAtt CWMetricsUpdateLambdaRole.Arn
+      Runtime: "nodejs12.x"
+      Timeout: "180"
+      Code:
+        S3Bucket: !Sub "utility-lambdas-${AWS::Region}"
+        S3Key: "kda-preprocess-flowlogs.zip"
+
+  S3Bucket:
+    Type: "AWS::S3::Bucket"
+    Properties:
+        BucketName: !Sub "${AWS::StackName}"
+
+  CleanupBucketOnDelete:
+    Type: Custom::CustomCleanupBucketResource
+    Properties:
+      ServiceToken: !Ref S3CleanupLambdaArn
+      BucketName: !Ref S3Bucket
+      DependsOn: !Ref S3Bucket
+      
+  KDFIngestion:
+    Type: "AWS::KinesisFirehose::DeliveryStream"
+    Properties:
+      DeliveryStreamName: !Sub "${AWS::StackName}-ingestion-delivery-stream"
+      DeliveryStreamType: DirectPut
+      ExtendedS3DestinationConfiguration:
+        BucketARN: !GetAtt S3Bucket.Arn
+        BufferingHints:
+          IntervalInSeconds: 300
+          SizeInMBs: 128
+        CloudWatchLoggingOptions:
+          Enabled: False
+        RoleARN: !GetAtt FirehoseDeliveryRole.Arn
+        Prefix: !Sub "${AWS::StackName}-vpc-flow-logs/"
+        CompressionFormat: UNCOMPRESSED
+        ProcessingConfiguration:
+          Enabled: True
+          Processors:
+            -
+              Type: Lambda
+              Parameters:
+                -
+                  ParameterName: LambdaArn
+                  ParameterValue: !GetAtt FirehoseTransformationFunction.Arn
+                -
+                  ParameterName: RoleArn
+                  ParameterValue: !GetAtt FirehoseDeliveryRole.Arn
+
+  KDAApplication:
+    Type: "AWS::KinesisAnalytics::Application"
+    Properties:
+      ApplicationName: !Sub "${AWS::StackName}-vpc-flow-log-analysis"
+      ApplicationCode: >
+        CREATE OR REPLACE STREAM "DESTINATION_SQL_STREAM" (
+            "window_timestamp" BIGINT,
+            "metric_name" VARCHAR(32),
+            "metric_value" DOUBLE,
+            "dimension_1_name" VARCHAR(255),
+            "dimension_1_value" VARCHAR(255),
+            "dimension_2_name" VARCHAR(255),
+            "dimension_2_value" VARCHAR(255),
+            "dimension_3_name" VARCHAR(255),
+            "dimension_3_value" VARCHAR(255),
+            "dimension_4_name" VARCHAR(255),
+            "dimension_4_value" VARCHAR(255),
+            "dimension_5_name" VARCHAR(255),
+            "dimension_5_value" VARCHAR(255));
+
+
+        /*
+        CREATE OR REPLACE STREAM "ALL_REJECTED_STREAM" (
+            "start_timestamp" BIGINT,
+            "end_timestamp" BIGINT,
+            "action" VARCHAR(8),
+            "log_status" VARCHAR(10),
+            "version" INTEGER,
+            "account_id" VARCHAR(16),
+            "interface" VARCHAR(16),
+            "source_addr" VARCHAR(16),
+            "destination_addr" VARCHAR(16),
+            "source_port" INTEGER,
+            "destination_port" INTEGER,
+            "protocol" INTEGER,
+            "packets" INTEGER,
+            "bytes" INTEGER);
+        */
+
+        CREATE OR REPLACE STREAM "REJECTED_BY_PORT_STREAM" (
+            "window_timestamp" BIGINT,
+            "rejected_packet_count" DOUBLE,
+            "destination_port" INTEGER);
+
+        CREATE OR REPLACE STREAM "REJECTED_BY_PROTOCOL_STREAM" (
+            "window_timestamp" BIGINT,
+            "rejected_packet_count" DOUBLE,
+            "protocol" INTEGER);
+
+        CREATE OR REPLACE STREAM "REJECTED_COUNT_STREAM" (
+            "window_timestamp" BIGINT,
+            "rejected_packet_count" DOUBLE);
+
+
+
+
+        CREATE OR REPLACE  PUMP "REJECTED_BY_PORT_PUMP" AS INSERT INTO "REJECTED_BY_PORT_STREAM"
+            SELECT STREAM
+                    UNIX_TIMESTAMP(STEP(to_timestamp("start_timestamp" * 1000) BY INTERVAL '10' SECOND)) as "window_timestamp",
+                    SUM("packets") as "rejected_packet_count",
+                   "destination_port" as "destination_port"
+                FROM
+                    "SOURCE_SQL_STREAM_001"
+                GROUP BY
+                    STEP("SOURCE_SQL_STREAM_001".ROWTIME BY INTERVAL '1' MINUTE),
+                    UNIX_TIMESTAMP(STEP(to_timestamp("start_timestamp" * 1000) BY INTERVAL '10' SECOND)),
+                    "destination_port";
+
+
+        CREATE OR REPLACE  PUMP "REJECTED_BY_PROTOCOL_PUMP" AS INSERT INTO "REJECTED_BY_PROTOCOL_STREAM"
+            SELECT STREAM
+                    UNIX_TIMESTAMP(STEP(to_timestamp("start_timestamp" * 1000) BY INTERVAL '10' SECOND)) as "window_timestamp",
+                    SUM("packets") as "rejected_packet_count",
+                   "protocol" as "protocol"
+                FROM
+                    "SOURCE_SQL_STREAM_001"
+                WHERE
+                    "action" = 'REJECT'
+                GROUP BY
+                    STEP("SOURCE_SQL_STREAM_001".ROWTIME BY INTERVAL '1' MINUTE),
+                    UNIX_TIMESTAMP(STEP(to_timestamp("start_timestamp" * 1000) BY INTERVAL '10' SECOND)),
+                    "protocol";
+
+        CREATE OR REPLACE  PUMP "REJECTED_COUNT_PUMP" AS INSERT INTO "REJECTED_COUNT_STREAM"
+            SELECT STREAM
+                    UNIX_TIMESTAMP(STEP(to_timestamp("start_timestamp" * 1000) BY INTERVAL '10' SECOND)) as "window_timestamp",
+                    SUM("packets") as "rejected_packet_count"
+                FROM
+                    "SOURCE_SQL_STREAM_001"
+                WHERE
+                    "action" = 'REJECT'
+                GROUP BY
+                    STEP("SOURCE_SQL_STREAM_001".ROWTIME BY INTERVAL '1' MINUTE),
+                    UNIX_TIMESTAMP(STEP(to_timestamp("start_timestamp" * 1000) BY INTERVAL '10' SECOND));
+
+
+
+        CREATE OR REPLACE  PUMP "STREAM_PUMP" AS INSERT INTO "DESTINATION_SQL_STREAM"
+            SELECT STREAM
+                "window_timestamp",
+                'RejectedPackets',
+                "rejected_packet_count",
+                'destination_port',
+                CAST("destination_port" AS VARCHAR(255)),
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                ''
+            FROM
+                "REJECTED_BY_PORT_STREAM"
+            UNION ALL
+            SELECT STREAM
+                "window_timestamp",
+                'RejectedPackets',
+                "rejected_packet_count",
+                'protocol',
+                CAST("protocol" AS VARCHAR(255)),
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                ''
+            FROM
+                "REJECTED_BY_PROTOCOL_STREAM"
+            UNION ALL
+            SELECT STREAM
+                "window_timestamp",
+                'TotalRejectedPackets',
+                "rejected_packet_count",
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                ''
+            FROM
+                "REJECTED_COUNT_STREAM";
+
+      Inputs:
+        -
+          NamePrefix: "SOURCE_SQL_STREAM"
+          InputProcessingConfiguration:
+            InputLambdaProcessor:
+              ResourceARN: !GetAtt KDAPreprocessLambda.Arn
+              RoleARN: !GetAtt KDARole.Arn
+          InputSchema:
+            RecordFormat:
+              RecordFormatType: JSON
+            RecordColumns:
+              -
+                Mapping: "$.logEvents[0:].extractedFields.start"
+                Name: start_timestamp
+                SqlType: BIGINT
+              -
+                Mapping: "$.logEvents[0:].extractedFields.end"
+                Name: end_timestamp
+                SqlType: BIGINT
+              -
+                Mapping: "$.logEvents[0:].extractedFields.action"
+                Name: action
+                SqlType: VARCHAR(8)
+              -
+                Mapping: "$.logEvents[0:].extractedFields.logstatus"
+                Name: log_status
+                SqlType: VARCHAR(10)
+              -
+                Mapping: "$.logEvents[0:].extractedFields.version"
+                Name: version
+                SqlType: INTEGER
+              -
+                Mapping: "$.logEvents[0:].extractedFields.accountid"
+                Name: account_id
+                SqlType: VARCHAR(16)
+              -
+                Mapping: "$.logEvents[0:].extractedFields.interfaceid"
+                Name: interface_id
+                SqlType: VARCHAR(16)
+              -
+                Mapping: "$.logEvents[0:].extractedFields.srcaddr"
+                Name: source_addr
+                SqlType: VARCHAR(16)
+              -
+                Mapping: "$.logEvents[0:].extractedFields.dstaddr"
+                Name: destination_addr
+                SqlType: VARCHAR(16)
+              -
+                Mapping: "$.logEvents[0:].extractedFields.srcport"
+                Name: source_port
+                SqlType: INTEGER
+              -
+                Mapping: "$.logEvents[0:].extractedFields.dstport"
+                Name: destination_port
+                SqlType: INTEGER
+              -
+                Mapping: "$.logEvents[0:].extractedFields.protocol"
+                Name: protocol
+                SqlType: INTEGER
+              -
+                Mapping: "$.logEvents[0:].extractedFields.packets"
+                Name: packets
+                SqlType: INTEGER
+              -
+                Mapping: "$.logEvents[0:].extractedFields.bytes"
+                Name: bytes
+                SqlType: INTEGER
+          KinesisFirehoseInput:
+            ResourceARN: !GetAtt KDFIngestion.Arn
+            RoleARN: !GetAtt KDARole.Arn
+
+  CWDashboard:
+    Type: "AWS::CloudWatch::Dashboard"
+    Properties:
+      DashboardName: !Sub "${AWS::StackName}-VPCFlowLogAnalysis"
+      DashboardBody: >
+        {
+            "widgets": [
+                {
+                    "type": "metric",
+                    "x": 0,
+                    "y": 0,
+                    "width": 24,
+                    "height": 9,
+                    "styles": "undefined",
+                    "properties": {
+                        "view": "timeSeries",
+                        "stacked": false,
+                        "metrics": [
+                            [ "VPC-Flow-Log-Analysis", "TotalRejectedPackets" ]
+                        ],
+                        "region": "us-west-2",
+                        "stat": "Sum",
+                        "period": 900,
+                        "title": "Total Rejected Packets"
+                    }
+                },
+                {
+                    "type": "metric",
+                    "x": 0,
+                    "y": 9,
+                    "width": 24,
+                    "height": 9,
+                    "styles": "undefined",
+                    "properties": {
+                        "view": "timeSeries",
+                        "stacked": true,
+                        "metrics": [
+                            [ "VPC-Flow-Log-Analysis", "RejectedPackets", "protocol", "1" ],
+                            [ "...", "6" ]
+                        ],
+                        "region": "us-west-2",
+                        "stat": "Sum",
+                        "period": 900,
+                        "title": "Rejected Packets per Protocol (SAMPLE ONLY - UPDATE NEEDED)"
+                    }
+                }
+            ]
+        }
+
+  GlueDatabase:
+    Type: "AWS::Glue::Database"
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Sub "${AWS::StackName}-vpc-flow-logs"
+        Description: "Database containing tables of VPC flow log records."
+
+  GlueTable:
+    Type: "AWS::Glue::Table"
+    Properties:
+      TableInput:
+        Name: !Select [1, !Split ["-", !Ref VPCId]]
+        Parameters: {
+            "classification": "parquet"
+          }
+        StorageDescriptor:
+          Location: !Join
+            - '/'
+            - - 's3:/'
+              - !Ref VPCId
+              - !Sub "${AWS::StackName}-vpc-flow-logs/"
+          Columns:
+            -
+              Name: start
+              Type: timestamp
+            -
+              Name: end
+              Type: timestamp
+            -
+              Name: action
+              Type: string
+            -
+              Name: logstatus
+              Type: string
+            -
+              Name: version
+              Type: string
+            -
+              Name: accountid
+              Type: string
+            -
+              Name: interfaceid
+              Type: string
+            -
+              Name: srcaddr
+              Type: string
+            -
+              Name: dstaddr
+              Type: string
+            -
+              Name: srcport
+              Type: string
+            -
+              Name: dstport
+              Type: string
+            -
+              Name: protocol
+              Type: string
+            -
+              Name: packets
+              Type: timestamp
+            -
+              Name: bytes
+              Type: timestamp
+
+          InputFormat: "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat"
+          OutputFormat: "org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat"
+          SerdeInfo:
+            SerializationLibrary: "org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe"
+            Parameters: {
+              "serialization.format" : 1
+            }
+      DatabaseName: !Ref GlueDatabase
+      CatalogId: !Ref AWS::AccountId
+
+  FlowLogsRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-FlowLogsRole"
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - vpc-flow-logs.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        -
+          PolicyName: !Sub "${AWS::StackName}-FlowLogsPolicy"
+          PolicyDocument:
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                  - logs:PutLogEvents
+                Resource: "*"
+
+  CWLogsSubscriptionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-CWLogsSubToFirehose"
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - !Sub "logs.${AWS::Region}.amazonaws.com"
+            Action:
+              - sts:AssumeRole
+      Policies:
+        -
+          PolicyName: !Sub "${AWS::StackName}-CWLogsSubToFHPolicy"
+          PolicyDocument:
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                  - firehose:DescribeDeliveryStream
+                  - firehose:Put*
+                Resource: !GetAtt KDFIngestion.Arn
+
+  VPCFlowLog:
+    Type: "AWS::EC2::FlowLog"
+    Properties:
+      DeliverLogsPermissionArn: !GetAtt FlowLogsRole.Arn
+      LogGroupName: vpc-flow-logs
+      ResourceId: !Ref VPCId
+      ResourceType: VPC
+      TrafficType: ALL
+
+  CWLogsSubscriptionFilter:
+    Type: "AWS::Logs::SubscriptionFilter"
+    Properties:
+      DestinationArn: !GetAtt KDFIngestion.Arn
+      LogGroupName: !Ref CWLogGroup
+      RoleArn: !GetAtt CWLogsSubscriptionRole.Arn
+      FilterPattern: "[version,accountid,interfaceid,srcaddr,dstaddr,srcport,dstport,protocol,packets,bytes,start,end,action,logstatus]"
+
+  CWLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub "${AWS::StackName}-vpc-flow-log-group"

@@ -1,0 +1,15 @@
+account_id:
+  dev: 863843292085
+  prod: 810041203434
+
+region:
+  dev: us-west-1
+  prod: us-east-2
+
+environment:
+  dev: dev
+  prod: prod
+
+vpc_id:
+  dev: vpc-f1699d97
+  prod: vpc-f1699d97

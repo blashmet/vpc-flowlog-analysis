@@ -1,0 +1,39 @@
+---
+ignore_git_branch: true
+
+
+variables:
+  file_path: ../config.yml
+
+deployments:
+
+  - name: vpc-flowlog-analysis
+
+    parameters:
+
+      namespace: ${var vpc_id.${env DEPLOY_ENVIRONMENT}}
+      account_id: ${var account_id.${env DEPLOY_ENVIRONMENT}}
+      region: ${var region.${env DEPLOY_ENVIRONMENT}}
+      vpc_id: ${var vpc_id.${env DEPLOY_ENVIRONMENT}}
+    
+    account_id: ${var account_id.${env DEPLOY_ENVIRONMENT}} 
+    
+    modules:
+
+        - name: s3_cleanup_lambda
+          path: s3_cleanup_lambda.cfn
+          tags:
+            - enabled
+
+        - name: s3_bucket_test
+          path: s3_bucket_test.cfn
+          tags:
+            - disabled
+
+        - name: vpc_flowlog_analysis
+          path: vpc_flowlog_analysis.cfn
+          tags:
+            - enabled
+
+    regions:
+      - ${var region.${env DEPLOY_ENVIRONMENT}}

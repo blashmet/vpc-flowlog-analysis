@@ -12,7 +12,6 @@ Parameters:
     Type: String
     Description: Lambda to cleanup buckets before deletion.
     
-
 Resources:
 
   FirehoseTransformationLambdaRole:
@@ -37,7 +36,6 @@ Resources:
               -
                 Effect: Allow
                 Action:
-                  - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource: "*"
@@ -54,6 +52,12 @@ Resources:
       Code:
         S3Bucket: !Sub "utility-lambdas-${AWS::Region}"
         S3Key: "firehose-process-vpc-flow-logs.zip"
+    DependsOn: FirehoseTransformationFunctionLogGroup
+
+  FirehoseTransformationFunctionLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-FHTransformFunction"
 
   FirehoseDeliveryRole:
     Type: "AWS::IAM::Role"
@@ -150,7 +154,6 @@ Resources:
               -
                 Effect: Allow
                 Action:
-                  - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource: "arn:aws:logs:*:*:*"
@@ -183,7 +186,6 @@ Resources:
               -
                 Effect: Allow
                 Action:
-                  - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                   - firehose:UpdateDestination
@@ -203,6 +205,12 @@ Resources:
       Code:
         S3Bucket: !Sub "utility-lambdas-${AWS::Region}"
         S3Key: "firehose-update-format-conversion.zip"
+    DependsOn: FirehoseUpdateFormatConversionFunctionLogGroup
+
+  FirehoseUpdateFormatConversionFunctionLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-FirehoseConversion"
 
   Custom:
     Type: Custom::ConfigureFirehoseResource
@@ -226,6 +234,12 @@ Resources:
       Code:
         S3Bucket: !Sub "utility-lambdas-${AWS::Region}"
         S3Key: "kda-update-cw-metrics.zip"
+    DependsOn: KDAOutputLambdaLogGroup
+
+  KDAOutputLambdaLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-KDADestinationFunction"
 
   KDAPreprocessLambda:
     Type: "AWS::Lambda::Function"
@@ -239,6 +253,12 @@ Resources:
       Code:
         S3Bucket: !Sub "utility-lambdas-${AWS::Region}"
         S3Key: "kda-preprocess-flowlogs.zip"
+    DependsOn: KDAPreprocessLambdaLogGroup
+
+  KDAPreprocessLambdaLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-KDAPreprocessFunction"
 
   UpdateFirehoseDataFormatConversionLambda:
     Type: "AWS::Lambda::Function"
@@ -252,6 +272,12 @@ Resources:
       Code:
         S3Bucket: !Sub "utility-lambdas-${AWS::Region}"
         S3Key: "kda-preprocess-flowlogs.zip"
+    DependsOn: UpdateFirehoseDataFormatConversionLambdaLogGroup
+
+  UpdateFirehoseDataFormatConversionLambdaLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-KDFUpdateDataFormat"
 
   S3Bucket:
     Type: "AWS::S3::Bucket"
@@ -278,7 +304,8 @@ Resources:
         CloudWatchLoggingOptions:
           Enabled: False
         RoleARN: !GetAtt FirehoseDeliveryRole.Arn
-        Prefix: !Sub "${AWS::StackName}-vpc-flow-logs/"
+        Prefix: !Sub "${AWS::StackName}/"
+        ErrorOutputPrefix: "/"
         CompressionFormat: UNCOMPRESSED
         ProcessingConfiguration:
           Enabled: True
@@ -516,8 +543,8 @@ Resources:
   CWDashboard:
     Type: "AWS::CloudWatch::Dashboard"
     Properties:
-      DashboardName: !Sub "${AWS::StackName}-VPCFlowLogAnalysis"
-      DashboardBody: >
+      DashboardName: !Sub "${AWS::StackName}"
+      DashboardBody: !Sub |
         {
             "widgets": [
                 {
@@ -533,7 +560,7 @@ Resources:
                         "metrics": [
                             [ "VPC-Flow-Log-Analysis", "TotalRejectedPackets" ]
                         ],
-                        "region": "us-west-2",
+                        "region": "${AWS::Region}",
                         "stat": "Sum",
                         "period": 900,
                         "title": "Total Rejected Packets"
@@ -553,7 +580,7 @@ Resources:
                             [ "VPC-Flow-Log-Analysis", "RejectedPackets", "protocol", "1" ],
                             [ "...", "6" ]
                         ],
-                        "region": "us-west-2",
+                        "region": "${AWS::Region}",
                         "stat": "Sum",
                         "period": 900,
                         "title": "Rejected Packets per Protocol (SAMPLE ONLY - UPDATE NEEDED)"
@@ -582,8 +609,8 @@ Resources:
           Location: !Join
             - '/'
             - - 's3:/'
-              - !Ref VPCId
-              - !Sub "${AWS::StackName}-vpc-flow-logs/"
+              - !Ref S3Bucket
+              - !Sub "${AWS::StackName}/"
           Columns:
             -
               Name: start
@@ -623,10 +650,10 @@ Resources:
               Type: string
             -
               Name: packets
-              Type: timestamp
+              Type: double
             -
               Name: bytes
-              Type: timestamp
+              Type: double
 
           InputFormat: "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat"
           OutputFormat: "org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat"
@@ -697,7 +724,7 @@ Resources:
     Type: "AWS::EC2::FlowLog"
     Properties:
       DeliverLogsPermissionArn: !GetAtt FlowLogsRole.Arn
-      LogGroupName: vpc-flow-logs
+      LogGroupName: !Sub "${AWS::StackName}"
       ResourceId: !Ref VPCId
       ResourceType: VPC
       TrafficType: ALL
@@ -706,11 +733,11 @@ Resources:
     Type: "AWS::Logs::SubscriptionFilter"
     Properties:
       DestinationArn: !GetAtt KDFIngestion.Arn
-      LogGroupName: !Ref CWLogGroup
+      LogGroupName: !Ref IngestionLogGroup
       RoleArn: !GetAtt CWLogsSubscriptionRole.Arn
       FilterPattern: "[version,accountid,interfaceid,srcaddr,dstaddr,srcport,dstport,protocol,packets,bytes,start,end,action,logstatus]"
 
-  CWLogGroup:
+  IngestionLogGroup:
     Type: "AWS::Logs::LogGroup"
     Properties:
-      LogGroupName: !Sub "${AWS::StackName}-vpc-flow-log-group"
+      LogGroupName: !Sub "${AWS::StackName}"

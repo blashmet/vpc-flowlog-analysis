@@ -8,15 +8,18 @@ variables:
 deployments:
 
   - name: vpc-flowlog-analysis
-
-    parameters:
-
-      namespace: ${var vpc_id.${env DEPLOY_ENVIRONMENT}}
-      account_id: ${var account_id.${env DEPLOY_ENVIRONMENT}}
-      region: ${var region.${env DEPLOY_ENVIRONMENT}}
-      vpc_id: ${var vpc_id.${env DEPLOY_ENVIRONMENT}}
     
-    account_id: ${var account_id.${env DEPLOY_ENVIRONMENT}} 
+    account_id: ${var account_id.${env DEPLOY_ENVIRONMENT}}
+
+    env_vars:
+      AWS_PROFILE: ${var aws_profile.${env DEPLOY_ENVIRONMENT}}
+      AWS_DEFAULT_REGION: ${var region.${env DEPLOY_ENVIRONMENT}}
+      CI: ${var continuous_integration.${env DEPLOY_ENVIRONMENT}}    
+    
+    parameters:
+      namespace: ${var vpc_id.${env DEPLOY_ENVIRONMENT}}
+      region: ${var region.${env DEPLOY_ENVIRONMENT}}
+      vpc_id: ${var vpc_id.${env DEPLOY_ENVIRONMENT}}    
     
     modules:
 

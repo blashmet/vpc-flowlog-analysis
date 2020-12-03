@@ -1,9 +1,14 @@
+#MAIN CONFIG
 account_id:
   dev: 863843292085
   prod: 810041203434
 
+aws_profile:
+  dev: vcoredev
+  prod: vcoreprod
+
 region:
-  dev: us-west-1
+  dev: us-east-1
   prod: us-east-2
 
 environment:
@@ -11,5 +16,9 @@ environment:
   prod: prod
 
 vpc_id:
-  dev: vpc-f1699d97
+  dev: vpc-0fc3f78f3847cbdfe
   prod: vpc-f1699d97
+
+continuous_integration:
+  dev: $true
+  prod: $null

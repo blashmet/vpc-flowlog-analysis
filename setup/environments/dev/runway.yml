@@ -14,7 +14,8 @@ deployments:
     env_vars:
       AWS_PROFILE: ${var aws_profile.${env DEPLOY_ENVIRONMENT}}
       AWS_DEFAULT_REGION: ${var region.${env DEPLOY_ENVIRONMENT}}
-      CI: ${var continuous_integration.${env DEPLOY_ENVIRONMENT}}    
+      CI: ${var continuous_integration.${env DEPLOY_ENVIRONMENT}}
+      VPC_ID: ${var vpc_id.${env DEPLOY_ENVIRONMENT}}
     
     parameters:
       namespace: ${var vpc_id.${env DEPLOY_ENVIRONMENT}}

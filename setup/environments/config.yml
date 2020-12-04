@@ -8,7 +8,7 @@ aws_profile:
   prod: vcoreprod
 
 region:
-  dev: us-west-1
+  dev: us-east-1
   prod: us-east-2
 
 environment:
@@ -16,7 +16,7 @@ environment:
   prod: prod
 
 vpc_id:
-  dev: vpc-f1699d97
+  dev: vpc-2fb16a44
   prod: vpc-f1699d97
 
 continuous_integration:

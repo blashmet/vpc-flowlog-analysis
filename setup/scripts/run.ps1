@@ -29,24 +29,22 @@ Start-Sleep 3
 Write-Host "Debug env_vars..."
 $env:AWS_PROFILE
 $env:AWS_DEFAULT_REGION
-$env:VPC_ID 
+$env:CI
+$env:VPC_ID
 $Action
 
 
 #deploy or destroy the modules defined in ${env}\runway.yml
 runway $Action --tag $Tag --debug --verbose 
-Write-Host "Last exit code was..."
-$LASTEXITCODE
 
 if ($LastExitCode -ne 0)
 {
-    Write-Host "Runway command failed, check CloudFormation console for details..."
+    Write-Host "Runway command failed, check CloudFormation console for details..." -ForegroundColor Magenta
     Set-Location $PSScriptRoot
     exit
 }
 
 try{
-
 
 Write-Host "Updating CMDB..." -ForegroundColor Yellow
 Update-CMDB -AWSProfile $env:AWS_PROFILE -Region $env:AWS_DEFAULT_REGION -VpcId $env:VPC_ID -Action $Action

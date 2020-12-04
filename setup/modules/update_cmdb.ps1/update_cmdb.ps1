@@ -22,16 +22,16 @@ function Update-CMDB {
                 }
                     
                 if($Action -eq "deploy"){
-
-                        Write-Host "Adding $VpcId to CMD" -ForegroundColor Green
+                        
                         $CMDBObject | Add-Content -Path "$CMDBFolder\$CMDBFile"
+                        Write-Host "Added $VpcId to CMDB" -ForegroundColor Green
 
                 }
 
                 if($Action -eq "destroy"){
-
-                        Write-Host "Removing $VpcId from CMDB" -ForegroundColor Green
+                        
                         Set-Content -Path "$CMDBFolder\$CMDBFile" -Value (Get-Content -Path "$CMDBFolder\$CMDBFile" | Select-String -Pattern $VpcId -NotMatch)
+                        Write-Host "Removed $VpcId from CMDB" -ForegroundColor Green
 
                 }               
              

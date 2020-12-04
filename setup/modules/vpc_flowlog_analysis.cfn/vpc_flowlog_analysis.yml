@@ -48,7 +48,7 @@ Resources:
       Handler: "index.handler"
       Role: !GetAtt FirehoseTransformationLambdaRole.Arn
       Runtime: "nodejs12.x"
-      Timeout: "180"
+      Timeout: 180
       Code:
         S3Bucket: !Sub "utility-lambdas-${AWS::Region}"
         S3Key: "firehose-process-vpc-flow-logs.zip"
@@ -201,7 +201,7 @@ Resources:
       Handler: "index.handler"
       Role: !GetAtt UpdateFirehoseFormatConversionLambdaRole.Arn
       Runtime: "nodejs12.x"
-      Timeout: "180"
+      Timeout: 180
       Code:
         S3Bucket: !Sub "utility-lambdas-${AWS::Region}"
         S3Key: "firehose-update-format-conversion.zip"
@@ -230,7 +230,7 @@ Resources:
       Handler: "index.handler"
       Role: !GetAtt CWMetricsUpdateLambdaRole.Arn
       Runtime: "nodejs12.x"
-      Timeout: "180"
+      Timeout: 180
       Code:
         S3Bucket: !Sub "utility-lambdas-${AWS::Region}"
         S3Key: "kda-update-cw-metrics.zip"
@@ -249,7 +249,7 @@ Resources:
       Handler: "index.handler"
       Role: !GetAtt CWMetricsUpdateLambdaRole.Arn
       Runtime: "nodejs12.x"
-      Timeout: "180"
+      Timeout: 180
       Code:
         S3Bucket: !Sub "utility-lambdas-${AWS::Region}"
         S3Key: "kda-preprocess-flowlogs.zip"
@@ -268,7 +268,7 @@ Resources:
       Handler: "index.handler"
       Role: !GetAtt CWMetricsUpdateLambdaRole.Arn
       Runtime: "nodejs12.x"
-      Timeout: "180"
+      Timeout: 180
       Code:
         S3Bucket: !Sub "utility-lambdas-${AWS::Region}"
         S3Key: "kda-preprocess-flowlogs.zip"

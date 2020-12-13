@@ -8,17 +8,17 @@ aws_profile:
   prod: vcoreprod
 
 region:
-  dev: us-east-1
-  prod: us-east-2
+  dev: us-west-2
+  prod: us-west-2
 
 environment:
   dev: dev
   prod: prod
 
 vpc_id:
-  dev: vpc-2fb16a44
-  prod: vpc-f1699d97
+  dev: vpc-0ea142e05b5bd34e9
+  prod: vpc-010e3f19a542cdd2d
 
 continuous_integration:
   dev: $true
-  prod: $null
+  prod: $true

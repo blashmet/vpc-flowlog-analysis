@@ -33,6 +33,9 @@ $env:CI
 $env:VPC_ID
 $Action
 
+Write-Host "Sleeping..." -ForegroundColor Yellow
+Start-Sleep 3
+
 
 #deploy or destroy the modules defined in ${env}\runway.yml
 runway $Action --tag $Tag --debug --verbose 

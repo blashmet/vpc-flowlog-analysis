@@ -131,6 +131,14 @@ Resources:
                 Resource:
                   - !GetAtt KDAOutputLambda.Arn
                   - !GetAtt KDAPreprocessLambda.Arn
+                  - !Join
+                      - ':'
+                      - - !GetAtt KDAPreprocessLambda.Arn
+                        - '$LATEST'
+                  - !Join
+                      - ':'
+                      - - !GetAtt KDAOutputLambda.Arn
+                        - '$LATEST'              
 
   CWMetricsUpdateLambdaRole:
     Type: "AWS::IAM::Role"
@@ -687,7 +695,6 @@ Resources:
               -
                 Effect: Allow
                 Action:
-                  - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:DescribeLogGroups
                   - logs:DescribeLogStreams
@@ -720,14 +727,20 @@ Resources:
                   - firehose:Put*
                 Resource: !GetAtt KDFIngestion.Arn
 
+  FlowLogLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub "${AWS::StackName}-vpc-flow-logs"
+  
   VPCFlowLog:
     Type: "AWS::EC2::FlowLog"
     Properties:
       DeliverLogsPermissionArn: !GetAtt FlowLogsRole.Arn
-      LogGroupName: !Sub "${AWS::StackName}"
+      LogGroupName: !Ref FlowLogLogGroup
       ResourceId: !Ref VPCId
       ResourceType: VPC
       TrafficType: ALL
+    DependsOn: FlowLogLogGroup
 
   CWLogsSubscriptionFilter:
     Type: "AWS::Logs::SubscriptionFilter"

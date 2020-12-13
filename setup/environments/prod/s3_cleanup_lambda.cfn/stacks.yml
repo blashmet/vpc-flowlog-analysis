@@ -1,0 +1,8 @@
+namespace: ${namespace}
+cfngin_bucket: ${namespace}-s3-cleanup-lambda
+sys_path: ./
+
+stacks:
+
+  s3-cleanup-lambda:
+    template_path: ../../../modules/s3_cleanup_lambda.cfn/s3_cleanup_lambda.yml

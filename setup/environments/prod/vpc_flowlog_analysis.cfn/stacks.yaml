@@ -1,0 +1,11 @@
+namespace: ${namespace}
+cfngin_bucket: ${namespace}-cfngin
+sys_path: ./
+
+stacks:
+
+  flowlog-analysis:
+    template_path: ../../../modules/vpc_flowlog_analysis.cfn/vpc_flowlog_analysis.yml
+    variables:
+      VPCId: ${vpc_id}
+      S3CleanupLambdaArn: ${rxref s3-cleanup-lambda::S3CleanupLambdaArn}

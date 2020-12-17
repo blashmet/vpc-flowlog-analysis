@@ -1,2 +1,2 @@
-@{Region=us-west-2; AWSProfile=vcoredev; VpcId=vpc-0ea142e05b5bd34e9}
+@{Region=us-west-2; AWSProfile=vcoreprod; VpcId=vpc-010e3f19a542cdd2d}
 @{Region=us-west-2; AWSProfile=vcoreprod; VpcId=vpc-010e3f19a542cdd2d}

@@ -1,9 +1,8 @@
 ---
-AWSTemplateFormatVersion: '2010-09-09'
+AWSTemplateFormatVersion: "2010-09-09"
 Description: Kinesis infrastructure for vpc flowlog visualization.
 
 Parameters:
-
   VPCId:
     Type: String
     Description: The VPC ID for the source VPC where all network flows will be logged and collected for analysis. Also used for S3 bucket name.
@@ -11,9 +10,9 @@ Parameters:
   S3CleanupLambdaArn:
     Type: String
     Description: Lambda to cleanup buckets before deletion.
-    
-Resources:
 
+Resources:
+#ROLES
   FirehoseTransformationLambdaRole:
     Type: "AWS::IAM::Role"
     Properties:
@@ -21,25 +20,259 @@ Resources:
       AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
-          -
-            Effect: Allow
+          - Effect: Allow
             Principal:
               Service:
                 - lambda.amazonaws.com
             Action:
               - sts:AssumeRole
       Policies:
-        -
-          PolicyName: !Sub "${AWS::StackName}-FirehosePolicy"
+        - PolicyName: !Sub "${AWS::StackName}-FirehosePolicy"
           PolicyDocument:
             Statement:
-              -
-                Effect: Allow
+              - Effect: Allow
                 Action:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource: "*"
+  FirehoseDeliveryRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-FirehoseRole"
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - firehose.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub "${AWS::StackName}-FirehosePolicy"
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - glue:GetTableVersions
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - s3:*
+                Resource:
+                  - !Join ["", ["arn:aws:s3:::", !Ref S3Bucket]]
+                  - !Join ["", ["arn:aws:s3:::", !Ref S3Bucket, "/*"]]
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                  - lambda:GetFunctionConfiguration
+                Resource:
+                  - !GetAtt FirehoseTransformationFunction.Arn
+  KDARole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-KDARole"
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - kinesisanalytics.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub "${AWS::StackName}-KDAPolicy"
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - firehose:DescribeDeliveryStream
+                  - firehose:Get*
+                Resource: !GetAtt KDFIngestion.Arn
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                  - lambda:GetFunctionConfiguration
+                Resource:
+                  - !GetAtt KDAOutputLambda.Arn
+                  - !GetAtt KDAPreprocessLambda.Arn
+                  - !Join
+                    - ":"
+                    - - !GetAtt KDAPreprocessLambda.Arn
+                      - "$LATEST"
+                  - !Join
+                    - ":"
+                    - - !GetAtt KDAOutputLambda.Arn
+                      - "$LATEST"
+  CWMetricsUpdateLambdaRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-KDAOutputLambdaRole"
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub "${AWS::StackName}-KDAPolicy"
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "arn:aws:logs:*:*:*"
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                Resource:
+                  - "*"
+  UpdateFirehoseFormatConversionLambdaRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-FirehoseConversionRole"
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub "${AWS::StackName}-FirehosePolicy"
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - firehose:UpdateDestination
+                  - firehose:DescribeDeliveryStream
+                  - iam:PassRole
+                Resource: "*"
+  CWLogsSubscriptionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-CWLogsSubToFirehose"
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - !Sub "logs.${AWS::Region}.amazonaws.com"
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub "${AWS::StackName}-CWLogsSubToFHPolicy"
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - firehose:DescribeDeliveryStream
+                  - firehose:Put*
+                Resource: !GetAtt KDFIngestion.Arn
+  FlowLogsRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-FlowLogsRole"
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - vpc-flow-logs.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub "${AWS::StackName}-FlowLogsPolicy"
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                  - logs:PutLogEvents
+                Resource: "*"
+#CLOUDWATCH
+  CWLogsSubscriptionFilter:
+    Type: "AWS::Logs::SubscriptionFilter"
+    Properties:
+      DestinationArn: !GetAtt KDFIngestion.Arn
+      LogGroupName: !Ref FlowLogLogGroup
+      RoleArn: !GetAtt CWLogsSubscriptionRole.Arn
+      FilterPattern: "[version,accountid,interfaceid,srcaddr,dstaddr,srcport,dstport,protocol,packets,bytes,start,end,action,logstatus]"
 
+  FirehoseTransformationFunctionLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-FHTransformFunction"
+
+  FirehoseUpdateFormatConversionFunctionLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-FirehoseConversion"
+
+  KDAOutputLambdaLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-KDADestinationFunction"
+
+  FlowLogLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub "${AWS::StackName}-log-group"
+  KDAPreprocessLambdaLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-KDAPreprocessFunction"
+  UpdateFirehoseDataFormatConversionLambdaLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-KDFUpdateDataFormat"
+  KDFIngestionLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-KDFIngestion"  
+  
+  CWDashboard:
+    Type: "AWS::CloudWatch::Dashboard"
+    Properties:
+      DashboardName: !Sub "${AWS::StackName}"
+      DashboardBody: !Sub |
+        {
+            "widgets": [
+                {
+                    "type": "metric",
+                    "x": 0,
+                    "y": 0,
+                    "width": 24,
+                    "height": 9,
+                    "styles": "undefined",
+                    "properties": {
+                        "view": "timeSeries",
+                        "stacked": false,
+                        "metrics": [
+                            [ "VPC-Flow-Log-Analysis", "TotalRejectedPackets" ]
+                        ],
+                        "region": "${AWS::Region}",
+                        "stat": "Sum",
+                        "period": 900,
+                        "title": "Total Rejected Packets"
+                    }
+                }
+            ]
+        }
+#LAMBDAS
   FirehoseTransformationFunction:
     Type: "AWS::Lambda::Function"
     Properties:
@@ -53,154 +286,6 @@ Resources:
         S3Bucket: !Sub "utility-lambdas-${AWS::Region}"
         S3Key: "firehose-process-vpc-flow-logs.zip"
     DependsOn: FirehoseTransformationFunctionLogGroup
-
-  FirehoseTransformationFunctionLogGroup:
-    Type: "AWS::Logs::LogGroup"
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-FHTransformFunction"
-
-  FirehoseDeliveryRole:
-    Type: "AWS::IAM::Role"
-    Properties:
-      RoleName: !Sub "${AWS::StackName}-FirehoseRole"
-      AssumeRolePolicyDocument:
-        Version: 2012-10-17
-        Statement:
-          -
-            Effect: Allow
-            Principal:
-              Service:
-                - firehose.amazonaws.com
-            Action:
-              - sts:AssumeRole
-      Policies:
-        -
-          PolicyName: !Sub "${AWS::StackName}-FirehosePolicy"
-          PolicyDocument:
-            Statement:
-              -
-                Effect: Allow
-                Action:
-                  - glue:GetTableVersions
-                Resource: "*"
-              -
-                Effect: Allow
-                Action:
-                  - s3:*
-                Resource:
-                  - !Join ["", ["arn:aws:s3:::", !Ref S3Bucket]]
-                  - !Join ["", ["arn:aws:s3:::", !Ref S3Bucket, "/*"]]
-              -
-                Effect: Allow
-                Action:
-                  - lambda:InvokeFunction
-                  - lambda:GetFunctionConfiguration
-                Resource:
-                  - !GetAtt FirehoseTransformationFunction.Arn
-
-  KDARole:
-    Type: "AWS::IAM::Role"
-    Properties:
-      RoleName: !Sub "${AWS::StackName}-KDARole"
-      AssumeRolePolicyDocument:
-        Version: 2012-10-17
-        Statement:
-          -
-            Effect: Allow
-            Principal:
-              Service:
-                - kinesisanalytics.amazonaws.com
-            Action:
-              - sts:AssumeRole
-      Policies:
-        -
-          PolicyName: !Sub "${AWS::StackName}-KDAPolicy"
-          PolicyDocument:
-            Statement:
-              -
-                Effect: Allow
-                Action:
-                  - firehose:DescribeDeliveryStream
-                  - firehose:Get*
-                Resource: !GetAtt KDFIngestion.Arn
-              -
-                Effect: Allow
-                Action:
-                  - lambda:InvokeFunction
-                  - lambda:GetFunctionConfiguration
-                Resource:
-                  - !GetAtt KDAOutputLambda.Arn
-                  - !GetAtt KDAPreprocessLambda.Arn
-                  - !Join
-                      - ':'
-                      - - !GetAtt KDAPreprocessLambda.Arn
-                        - '$LATEST'
-                  - !Join
-                      - ':'
-                      - - !GetAtt KDAOutputLambda.Arn
-                        - '$LATEST'              
-
-  CWMetricsUpdateLambdaRole:
-    Type: "AWS::IAM::Role"
-    Properties:
-      RoleName: !Sub "${AWS::StackName}-KDAOutputLambdaRole"
-      AssumeRolePolicyDocument:
-        Version: 2012-10-17
-        Statement:
-          -
-            Effect: Allow
-            Principal:
-              Service:
-                - lambda.amazonaws.com
-            Action:
-              - sts:AssumeRole
-      Policies:
-        -
-          PolicyName: !Sub "${AWS::StackName}-KDAPolicy"
-          PolicyDocument:
-            Statement:
-              -
-                Effect: Allow
-                Action:
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource: "arn:aws:logs:*:*:*"
-              -
-                Effect: Allow
-                Action:
-                  - cloudwatch:PutMetricData
-                Resource:
-                  - "*"
-
-  UpdateFirehoseFormatConversionLambdaRole:
-    Type: "AWS::IAM::Role"
-    Properties:
-      RoleName: !Sub "${AWS::StackName}-FirehoseConversionRole"
-      AssumeRolePolicyDocument:
-        Version: 2012-10-17
-        Statement:
-          -
-            Effect: Allow
-            Principal:
-              Service:
-                - lambda.amazonaws.com
-            Action:
-              - sts:AssumeRole
-      Policies:
-        -
-          PolicyName: !Sub "${AWS::StackName}-FirehosePolicy"
-          PolicyDocument:
-            Statement:
-              -
-                Effect: Allow
-                Action:
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                  - firehose:UpdateDestination
-                  - firehose:DescribeDeliveryStream
-                  - iam:PassRole
-                Resource: "*"
-
   FirehoseUpdateFormatConversionFunction:
     Type: "AWS::Lambda::Function"
     Properties:
@@ -214,22 +299,6 @@ Resources:
         S3Bucket: !Sub "utility-lambdas-${AWS::Region}"
         S3Key: "firehose-update-format-conversion.zip"
     DependsOn: FirehoseUpdateFormatConversionFunctionLogGroup
-
-  FirehoseUpdateFormatConversionFunctionLogGroup:
-    Type: "AWS::Logs::LogGroup"
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-FirehoseConversion"
-
-  Custom:
-    Type: Custom::ConfigureFirehoseResource
-    Properties:
-      ServiceToken: !GetAtt FirehoseUpdateFormatConversionFunction.Arn
-      DeliveryStreamName: !Ref KDFIngestion
-      GlueDatabaseName: !Ref GlueDatabase
-      GlueTableName: !Ref GlueTable
-      FirehoseRole: !GetAtt FirehoseDeliveryRole.Arn
-      Region: !Ref AWS::Region
-
   KDAOutputLambda:
     Type: "AWS::Lambda::Function"
     Properties:
@@ -243,11 +312,6 @@ Resources:
         S3Bucket: !Sub "utility-lambdas-${AWS::Region}"
         S3Key: "kda-update-cw-metrics.zip"
     DependsOn: KDAOutputLambdaLogGroup
-
-  KDAOutputLambdaLogGroup:
-    Type: "AWS::Logs::LogGroup"
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-KDADestinationFunction"
 
   KDAPreprocessLambda:
     Type: "AWS::Lambda::Function"
@@ -263,11 +327,6 @@ Resources:
         S3Key: "kda-preprocess-flowlogs.zip"
     DependsOn: KDAPreprocessLambdaLogGroup
 
-  KDAPreprocessLambdaLogGroup:
-    Type: "AWS::Logs::LogGroup"
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-KDAPreprocessFunction"
-
   UpdateFirehoseDataFormatConversionLambda:
     Type: "AWS::Lambda::Function"
     Properties:
@@ -281,24 +340,77 @@ Resources:
         S3Bucket: !Sub "utility-lambdas-${AWS::Region}"
         S3Key: "kda-preprocess-flowlogs.zip"
     DependsOn: UpdateFirehoseDataFormatConversionLambdaLogGroup
-
-  UpdateFirehoseDataFormatConversionLambdaLogGroup:
-    Type: "AWS::Logs::LogGroup"
+#GLUE
+  GlueDatabase:
+    Type: "AWS::Glue::Database"
     Properties:
-      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-KDFUpdateDataFormat"
-
-  S3Bucket:
-    Type: "AWS::S3::Bucket"
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Select [1, !Split ["-", !Ref VPCId]]
+        Description: "Database containing tables of VPC flow log records."
+  GlueTable:
+    Type: "AWS::Glue::Table"
     Properties:
-        BucketName: !Sub "${AWS::StackName}"
+      TableInput:
+        Name: !Select [1, !Split ["-", !Ref VPCId]]
+        Parameters:
+            classification: parquet
+            projection.enabled: 'true'
+            projection.datehour.type: date
+            projection.datehour.range: '2020/01/01/00,NOW'
+            projection.datehour.format: yyyy/MM/dd/HH
+            projection.datehour.interval: '1'
+            projection.datehour.interval.unit: HOURS
+            storage.location.template: !Sub "s3://${S3Bucket}/parquet/${!datehour}"
+        PartitionKeys:
+            - Name: datehour
+              Type: string
+ 
+        StorageDescriptor:
+          Location: !Join
+            - "/"
+            - - "s3:/"
+              - !Ref S3Bucket
+              - "parquet/"
+          Columns:
+            - Name: start
+              Type: timestamp
+            - Name: end
+              Type: timestamp
+            - Name: action
+              Type: string
+            - Name: logstatus
+              Type: string
+            - Name: version
+              Type: string
+            - Name: accountid
+              Type: string
+            - Name: interfaceid
+              Type: string
+            - Name: srcaddr
+              Type: string
+            - Name: dstaddr
+              Type: string
+            - Name: srcport
+              Type: string
+            - Name: dstport
+              Type: string
+            - Name: protocol
+              Type: string
+            - Name: packets
+              Type: double
+            - Name: bytes
+              Type: double
 
-  CleanupBucketOnDelete:
-    Type: Custom::CustomCleanupBucketResource
-    Properties:
-      ServiceToken: !Ref S3CleanupLambdaArn
-      BucketName: !Ref S3Bucket
-      DependsOn: !Ref S3Bucket
-      
+          InputFormat: "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat"
+          OutputFormat: "org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat"
+          SerdeInfo:
+            SerializationLibrary: "org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe"
+            Parameters: { "serialization.format": 1 }
+        TableType: EXTERNAL_TABLE
+      DatabaseName: !Ref GlueDatabase
+      CatalogId: !Ref AWS::AccountId
+#KINESIS
   KDFIngestion:
     Type: "AWS::KinesisFirehose::DeliveryStream"
     Properties:
@@ -311,27 +423,25 @@ Resources:
           SizeInMBs: 128
         CloudWatchLoggingOptions:
           Enabled: False
+
         RoleARN: !GetAtt FirehoseDeliveryRole.Arn
-        Prefix: !Sub "${AWS::StackName}/"
+        Prefix: "parquet/"
         ErrorOutputPrefix: "/"
         CompressionFormat: UNCOMPRESSED
         ProcessingConfiguration:
           Enabled: True
           Processors:
-            -
-              Type: Lambda
+            - Type: Lambda
               Parameters:
-                -
-                  ParameterName: LambdaArn
+                - ParameterName: LambdaArn
                   ParameterValue: !GetAtt FirehoseTransformationFunction.Arn
-                -
-                  ParameterName: RoleArn
+                - ParameterName: RoleArn
                   ParameterValue: !GetAtt FirehoseDeliveryRole.Arn
 
   KDAApplication:
     Type: "AWS::KinesisAnalytics::Application"
     Properties:
-      ApplicationName: !Sub "${AWS::StackName}-vpc-flow-log-analysis"
+      ApplicationName: !Sub "${AWS::StackName}"
       ApplicationCode: >
         CREATE OR REPLACE STREAM "DESTINATION_SQL_STREAM" (
             "window_timestamp" BIGINT,
@@ -478,8 +588,7 @@ Resources:
                 "REJECTED_COUNT_STREAM";
 
       Inputs:
-        -
-          NamePrefix: "SOURCE_SQL_STREAM"
+        - NamePrefix: "SOURCE_SQL_STREAM"
           InputProcessingConfiguration:
             InputLambdaProcessor:
               ResourceARN: !GetAtt KDAPreprocessLambda.Arn
@@ -488,250 +597,52 @@ Resources:
             RecordFormat:
               RecordFormatType: JSON
             RecordColumns:
-              -
-                Mapping: "$.logEvents[0:].extractedFields.start"
+              - Mapping: "$.logEvents[0:].extractedFields.start"
                 Name: start_timestamp
                 SqlType: BIGINT
-              -
-                Mapping: "$.logEvents[0:].extractedFields.end"
+              - Mapping: "$.logEvents[0:].extractedFields.end"
                 Name: end_timestamp
                 SqlType: BIGINT
-              -
-                Mapping: "$.logEvents[0:].extractedFields.action"
+              - Mapping: "$.logEvents[0:].extractedFields.action"
                 Name: action
                 SqlType: VARCHAR(8)
-              -
-                Mapping: "$.logEvents[0:].extractedFields.logstatus"
+              - Mapping: "$.logEvents[0:].extractedFields.logstatus"
                 Name: log_status
                 SqlType: VARCHAR(10)
-              -
-                Mapping: "$.logEvents[0:].extractedFields.version"
+              - Mapping: "$.logEvents[0:].extractedFields.version"
                 Name: version
                 SqlType: INTEGER
-              -
-                Mapping: "$.logEvents[0:].extractedFields.accountid"
+              - Mapping: "$.logEvents[0:].extractedFields.accountid"
                 Name: account_id
                 SqlType: VARCHAR(16)
-              -
-                Mapping: "$.logEvents[0:].extractedFields.interfaceid"
+              - Mapping: "$.logEvents[0:].extractedFields.interfaceid"
                 Name: interface_id
                 SqlType: VARCHAR(16)
-              -
-                Mapping: "$.logEvents[0:].extractedFields.srcaddr"
+              - Mapping: "$.logEvents[0:].extractedFields.srcaddr"
                 Name: source_addr
                 SqlType: VARCHAR(16)
-              -
-                Mapping: "$.logEvents[0:].extractedFields.dstaddr"
+              - Mapping: "$.logEvents[0:].extractedFields.dstaddr"
                 Name: destination_addr
                 SqlType: VARCHAR(16)
-              -
-                Mapping: "$.logEvents[0:].extractedFields.srcport"
+              - Mapping: "$.logEvents[0:].extractedFields.srcport"
                 Name: source_port
                 SqlType: INTEGER
-              -
-                Mapping: "$.logEvents[0:].extractedFields.dstport"
+              - Mapping: "$.logEvents[0:].extractedFields.dstport"
                 Name: destination_port
                 SqlType: INTEGER
-              -
-                Mapping: "$.logEvents[0:].extractedFields.protocol"
+              - Mapping: "$.logEvents[0:].extractedFields.protocol"
                 Name: protocol
                 SqlType: INTEGER
-              -
-                Mapping: "$.logEvents[0:].extractedFields.packets"
+              - Mapping: "$.logEvents[0:].extractedFields.packets"
                 Name: packets
                 SqlType: INTEGER
-              -
-                Mapping: "$.logEvents[0:].extractedFields.bytes"
+              - Mapping: "$.logEvents[0:].extractedFields.bytes"
                 Name: bytes
                 SqlType: INTEGER
           KinesisFirehoseInput:
             ResourceARN: !GetAtt KDFIngestion.Arn
             RoleARN: !GetAtt KDARole.Arn
-
-  CWDashboard:
-    Type: "AWS::CloudWatch::Dashboard"
-    Properties:
-      DashboardName: !Sub "${AWS::StackName}"
-      DashboardBody: !Sub |
-        {
-            "widgets": [
-                {
-                    "type": "metric",
-                    "x": 0,
-                    "y": 0,
-                    "width": 24,
-                    "height": 9,
-                    "styles": "undefined",
-                    "properties": {
-                        "view": "timeSeries",
-                        "stacked": false,
-                        "metrics": [
-                            [ "VPC-Flow-Log-Analysis", "TotalRejectedPackets" ]
-                        ],
-                        "region": "${AWS::Region}",
-                        "stat": "Sum",
-                        "period": 900,
-                        "title": "Total Rejected Packets"
-                    }
-                },
-                {
-                    "type": "metric",
-                    "x": 0,
-                    "y": 9,
-                    "width": 24,
-                    "height": 9,
-                    "styles": "undefined",
-                    "properties": {
-                        "view": "timeSeries",
-                        "stacked": true,
-                        "metrics": [
-                            [ "VPC-Flow-Log-Analysis", "RejectedPackets", "protocol", "1" ],
-                            [ "...", "6" ]
-                        ],
-                        "region": "${AWS::Region}",
-                        "stat": "Sum",
-                        "period": 900,
-                        "title": "Rejected Packets per Protocol (SAMPLE ONLY - UPDATE NEEDED)"
-                    }
-                }
-            ]
-        }
-
-  GlueDatabase:
-    Type: "AWS::Glue::Database"
-    Properties:
-      CatalogId: !Ref AWS::AccountId
-      DatabaseInput:
-        Name: !Sub "${AWS::StackName}-vpc-flow-logs"
-        Description: "Database containing tables of VPC flow log records."
-
-  GlueTable:
-    Type: "AWS::Glue::Table"
-    Properties:
-      TableInput:
-        Name: !Select [1, !Split ["-", !Ref VPCId]]
-        Parameters: {
-            "classification": "parquet"
-          }
-        StorageDescriptor:
-          Location: !Join
-            - '/'
-            - - 's3:/'
-              - !Ref S3Bucket
-              - !Sub "${AWS::StackName}/"
-          Columns:
-            -
-              Name: start
-              Type: timestamp
-            -
-              Name: end
-              Type: timestamp
-            -
-              Name: action
-              Type: string
-            -
-              Name: logstatus
-              Type: string
-            -
-              Name: version
-              Type: string
-            -
-              Name: accountid
-              Type: string
-            -
-              Name: interfaceid
-              Type: string
-            -
-              Name: srcaddr
-              Type: string
-            -
-              Name: dstaddr
-              Type: string
-            -
-              Name: srcport
-              Type: string
-            -
-              Name: dstport
-              Type: string
-            -
-              Name: protocol
-              Type: string
-            -
-              Name: packets
-              Type: double
-            -
-              Name: bytes
-              Type: double
-
-          InputFormat: "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat"
-          OutputFormat: "org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat"
-          SerdeInfo:
-            SerializationLibrary: "org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe"
-            Parameters: {
-              "serialization.format" : 1
-            }
-      DatabaseName: !Ref GlueDatabase
-      CatalogId: !Ref AWS::AccountId
-
-  FlowLogsRole:
-    Type: "AWS::IAM::Role"
-    Properties:
-      RoleName: !Sub "${AWS::StackName}-FlowLogsRole"
-      AssumeRolePolicyDocument:
-        Version: 2012-10-17
-        Statement:
-          -
-            Effect: Allow
-            Principal:
-              Service:
-                - vpc-flow-logs.amazonaws.com
-            Action:
-              - sts:AssumeRole
-      Policies:
-        -
-          PolicyName: !Sub "${AWS::StackName}-FlowLogsPolicy"
-          PolicyDocument:
-            Statement:
-              -
-                Effect: Allow
-                Action:
-                  - logs:CreateLogStream
-                  - logs:DescribeLogGroups
-                  - logs:DescribeLogStreams
-                  - logs:PutLogEvents
-                Resource: "*"
-
-  CWLogsSubscriptionRole:
-    Type: "AWS::IAM::Role"
-    Properties:
-      RoleName: !Sub "${AWS::StackName}-CWLogsSubToFirehose"
-      AssumeRolePolicyDocument:
-        Version: 2012-10-17
-        Statement:
-          -
-            Effect: Allow
-            Principal:
-              Service:
-                - !Sub "logs.${AWS::Region}.amazonaws.com"
-            Action:
-              - sts:AssumeRole
-      Policies:
-        -
-          PolicyName: !Sub "${AWS::StackName}-CWLogsSubToFHPolicy"
-          PolicyDocument:
-            Statement:
-              -
-                Effect: Allow
-                Action:
-                  - firehose:DescribeDeliveryStream
-                  - firehose:Put*
-                Resource: !GetAtt KDFIngestion.Arn
-
-  FlowLogLogGroup:
-    Type: "AWS::Logs::LogGroup"
-    Properties:
-      LogGroupName: !Sub "${AWS::StackName}-vpc-flow-logs"
-  
+#VPC FLOW LOGS
   VPCFlowLog:
     Type: "AWS::EC2::FlowLog"
     Properties:
@@ -741,16 +652,22 @@ Resources:
       ResourceType: VPC
       TrafficType: ALL
     DependsOn: FlowLogLogGroup
-
-  CWLogsSubscriptionFilter:
-    Type: "AWS::Logs::SubscriptionFilter"
+  S3Bucket:
+    Type: "AWS::S3::Bucket"
     Properties:
-      DestinationArn: !GetAtt KDFIngestion.Arn
-      LogGroupName: !Ref IngestionLogGroup
-      RoleArn: !GetAtt CWLogsSubscriptionRole.Arn
-      FilterPattern: "[version,accountid,interfaceid,srcaddr,dstaddr,srcport,dstport,protocol,packets,bytes,start,end,action,logstatus]"
-
-  IngestionLogGroup:
-    Type: "AWS::Logs::LogGroup"
+      BucketName: !Sub "${AWS::StackName}"
+  CleanupBucketOnDelete:
+    Type: Custom::CustomCleanupBucketResource
     Properties:
-      LogGroupName: !Sub "${AWS::StackName}"
+      ServiceToken: !Ref S3CleanupLambdaArn
+      BucketName: !Ref S3Bucket
+      DependsOn: !Ref S3Bucket
+  Custom:
+    Type: Custom::ConfigureFirehoseResource
+    Properties:
+      ServiceToken: !GetAtt FirehoseUpdateFormatConversionFunction.Arn
+      DeliveryStreamName: !Ref KDFIngestion
+      GlueDatabaseName: !Ref GlueDatabase
+      GlueTableName: !Ref GlueTable
+      FirehoseRole: !GetAtt FirehoseDeliveryRole.Arn
+      Region: !Ref AWS::Region

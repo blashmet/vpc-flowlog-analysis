@@ -21,7 +21,7 @@ $ErrorActionPreference = "Stop"
 
 Set-Location "..\environments\$Environment"
 
-Load-EnvironmentVariables #source environment variables defined in ${env}\runway.yml
+Import-EnvVars #source environment variables defined in ${env}\runway.yml
 
 Write-Host "Sleeping..." -ForegroundColor Yellow
 Start-Sleep 3

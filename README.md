@@ -11,3 +11,6 @@
 4.  Run 'runway deploy --tag "enabled"'
 5.  Browse to the CloudFormation console to view progress; after stack finishes creating, browse to the Athena console.
 6.  Select the VPC database and configure the query-results folder location (create this in the VPC bucket).
+7.  Browse to Kinesis and start the application by "viewing SQL results."
+8.  Register the destination Lambda with Kinesis.
+9.  Run test queries in Athena and view realtime data in the CloudWatch dashboard.
